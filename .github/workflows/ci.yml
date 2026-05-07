@@ -2,4 +2,4 @@ name: CI
 on: [push, pull_request]
 jobs:
   validate:
-    uses: Molecule-AI/molecule-ci/.github/workflows/validate-plugin.yml@main
+    uses: molecule-ai/molecule-ci/.github/workflows/validate-plugin.yml@main
