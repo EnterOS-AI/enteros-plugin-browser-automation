@@ -11,10 +11,11 @@ Both capabilities require the **CDP proxy** to be running on the host:
 
 ```bash
 # Install and start the CDP proxy (once per host)
-./setup.sh
+bash host-bridge/install-host-bridge.sh
 ```
 
 The proxy requires `CDP_PROXY_TOKEN` (>=16 chars) or a token file at `~/.molecule-cdp-proxy-token`.
+For local development without a token: `node host-bridge/cdp-proxy.cjs --dev-mode` (logs a security warning).
 
 ## Puppeteer (external sites)
 
@@ -58,10 +59,10 @@ github://Molecule-AI/molecule-ai-plugin-browser-automation
 
 ## Known issues
 
-See [known-issues.md](known-issues.md). Key ones:
+See [known-issues.md](known-issues.md).
 
-- **KI-001:** Always use `defaultViewport: null` or coordinate-based actions will be silently wrong
-- **KI-004:** Use `browser.disconnect()` not `browser.close()` — close kills the shared Chrome process
+- **KI-002:** The Chrome profile is shared across agents — use separate `--user-data-dir` for isolation
+- **KI-003:** For local dev without a token, use `--dev-mode` (logs security warning)
 
 ## License
 
