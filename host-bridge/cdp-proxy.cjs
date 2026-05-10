@@ -21,6 +21,7 @@
  *   The token is read from CDP_PROXY_TOKEN (env var) OR ~/.molecule-cdp-proxy-token
  *   (a chmod 600 file written by install-host-bridge.sh at install time).
  *   If neither is set, the proxy REFUSES TO START — there is no un-authed mode.
+ *   EXCEPTION: --dev-mode skips the token requirement for local development only.
  *
  *   Clients (the bundled `lib/connect.js` helper) send
  *   `X-CDP-Proxy-Token: <token>` on every HTTP request and WebSocket upgrade.
@@ -35,11 +36,18 @@
  *   # Then start the proxy (normally via install-host-bridge.sh into launchd/systemd):
  *   CDP_PROXY_TOKEN=$(cat ~/.molecule-cdp-proxy-token) node cdp-proxy.cjs
  *
+ *   # Development only (INSECURE on shared networks — do NOT use in production):
+ *   node cdp-proxy.cjs --dev-mode
+ *
  * Env overrides:
  *   CHROME_PORT      (default 9222)
  *   PROXY_PORT       (default 9223)
  *   BIND_ADDR        (default 0.0.0.0 — safe because token auth is required)
  *   CDP_PROXY_TOKEN  (required — falls back to ~/.molecule-cdp-proxy-token)
+ *
+ * CLI flags:
+ *   --dev-mode   Skip token requirement for local development. Logs a prominent
+ *                security warning. DO NOT use on a shared network or production host.
  */
 const fs = require('fs');
 const http = require('http');
@@ -52,8 +60,20 @@ const PROXY_PORT = parseInt(process.env.PROXY_PORT || '9223', 10);
 const BIND_ADDR = process.env.BIND_ADDR || '0.0.0.0';
 const TOKEN_FILE = path.join(os.homedir(), '.molecule-cdp-proxy-token');
 
+// CLI flags — --dev-mode skips token requirement for local development only.
+const DEV_MODE = process.argv.includes('--dev-mode');
+if (DEV_MODE) {
+  console.warn('============================================');
+  console.warn(' WARNING: cdp-proxy running in --dev-mode   ');
+  console.warn(' Token authentication is DISABLED.           ');
+  console.warn(' Do NOT use on a shared network or production ');
+  console.warn(' host — anyone with network access can control');
+  console.warn(' your Chrome session.                         ');
+  console.warn('============================================');
+}
+
 // Resolve the auth token. Priority: env var > token file. Fail loudly if
-// neither is present — there is NO unauth mode (#293).
+// neither is present — there is NO unauth mode (#293) unless --dev-mode is set.
 function loadToken() {
   if (process.env.CDP_PROXY_TOKEN && process.env.CDP_PROXY_TOKEN.length >= 16) {
     return process.env.CDP_PROXY_TOKEN;
@@ -63,11 +83,17 @@ function loadToken() {
     if (tok.length >= 16) return tok;
     throw new Error(`token file ${TOKEN_FILE} is too short (<16 chars)`);
   } catch (e) {
+    if (DEV_MODE) {
+      // --dev-mode: allow startup without a token for local development convenience
+      return null;
+    }
     console.error('FATAL: CDP proxy auth token not found.');
     console.error('Set CDP_PROXY_TOKEN env var (>=16 chars) OR write a token to');
     console.error(`  ${TOKEN_FILE} (chmod 600)`);
     console.error('See plugins/browser-automation/host-bridge/install-host-bridge.sh');
     console.error('for the canonical installer that generates + provisions the token.');
+    console.error('Or for local development only:');
+    console.error('  node cdp-proxy.cjs --dev-mode');
     console.error('Original error:', e.message);
     process.exit(1);
   }
@@ -86,7 +112,7 @@ function tokenMatches(header) {
 }
 
 const proxy = http.createServer((req, res) => {
-  if (!tokenMatches(req.headers['x-cdp-proxy-token'])) {
+  if (PROXY_TOKEN !== null && !tokenMatches(req.headers['x-cdp-proxy-token'])) {
     res.writeHead(401, { 'Content-Type': 'text/plain' });
     res.end('unauthorized: missing or invalid X-CDP-Proxy-Token');
     return;
@@ -114,8 +140,8 @@ const proxy = http.createServer((req, res) => {
 proxy.on('upgrade', (req, socket, head) => {
   // WebSocket upgrade requests go through the same auth check. If the client
   // didn't send the token header on the HTTP upgrade request, reject before
-  // we touch the backing Chrome connection at all.
-  if (!tokenMatches(req.headers['x-cdp-proxy-token'])) {
+  // we touch the backing Chrome connection at all (unless --dev-mode is active).
+  if (PROXY_TOKEN !== null && !tokenMatches(req.headers['x-cdp-proxy-token'])) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return;
@@ -152,7 +178,11 @@ function stripAuthHeader(headers) {
 
 proxy.listen(PROXY_PORT, BIND_ADDR, () => {
   console.log(`cdp-proxy listening on ${BIND_ADDR}:${PROXY_PORT} → 127.0.0.1:${CHROME_PORT}`);
-  console.log(`auth required: send X-CDP-Proxy-Token header on every request`);
+  if (PROXY_TOKEN !== null) {
+    console.log(`auth required: send X-CDP-Proxy-Token header on every request`);
+  } else {
+    console.log(`WARNING: auth DISABLED (--dev-mode) — not for production use`);
+  }
 });
 
 process.on('SIGTERM', () => proxy.close(() => process.exit(0)));
