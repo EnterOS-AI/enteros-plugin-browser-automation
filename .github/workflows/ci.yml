@@ -1,5 +1,0 @@
-name: CI
-on: [push, pull_request]
-jobs:
-  validate:
-    uses: molecule-ai/molecule-ci/.github/workflows/validate-plugin.yml@main
